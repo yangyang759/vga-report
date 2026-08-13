@@ -2,32 +2,24 @@ name: daily-vga-report
 
 on:
   schedule:
-    - cron: "0 4 * * *"   # UTC 04:00 = 台灣時間 12:00
+    - cron: "0 4 * * *"   # UTC 04:00 = 台灣 12:00
   workflow_dispatch: {}   # 允許手動按鈕觸發
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: 抓原價屋價格並產生報表
+      - name: 抓原價屋價格產生報表
         run: python coolpc_vga_tracker.py --quiet
-      - name: 準備 Pages 目錄
+      - name: 準備部署目錄
         run: mkdir -p docs && cp vga_report.html docs/index.html
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - name: 部署到 Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
         with:
-          path: docs
-      - uses: actions/deploy-pages@v4
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy docs --project-name=vga-report
