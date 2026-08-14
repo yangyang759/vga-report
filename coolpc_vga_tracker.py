@@ -3,7 +3,8 @@
 # v6.0: 新增專業卡晶片分類(RTX A/Ada/PRO Blackwell) + 報表更名為「顯示卡每日報價」
 import urllib.request, urllib.error, re, os, sys, csv
 import html as htmllib, base64, json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+TWT = timezone(timedelta(hours=8))   # 固定台灣時間 UTC+8
 
 # ========== 可自行修改 ==========
 WATCH_KEYWORDS = []   # 想特別標記的型號,例如 ['RTX 5070']
@@ -163,7 +164,7 @@ def upload_github(html_text, today):
         log('GitHub 上傳失敗:', e.code, e.read().decode()[:200])
 
 def main():
-    now = datetime.now(); today = now.strftime('%Y-%m-%d')
+      now = datetime.now(TWT); today = now.strftime('%Y-%m-%d')
     os.makedirs(DATA_DIR, exist_ok=True)
     body = find_vga_section(fetch_html())[1]
     if not body: log('找不到顯示卡分類'); sys.exit(1)
