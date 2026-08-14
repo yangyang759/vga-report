@@ -2,8 +2,9 @@ name: daily-vga-report
 
 on:
   schedule:
-    - cron: "0 4 * * *"   # UTC 04:00 = 台灣 12:00
-  workflow_dispatch: {}   # 允許手動按鈕觸發
+    - cron: "0 4 * * *"   # 台灣 12:00
+    - cron: "0 12 * * *"  # 台灣 20:00（備援）
+  workflow_dispatch: {}
 
 jobs:
   deploy:
@@ -16,7 +17,7 @@ jobs:
       - name: 抓原價屋價格產生報表
         run: python coolpc_vga_tracker.py --quiet
       - name: 準備部署目錄
-        run: mkdir -p docs && cp vga_report.html docs/index.html
+        run: mkdir -p docs && cp vga_report.html docs/index.html && cp ram_report.html docs/ram.html
       - name: 部署到 Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
