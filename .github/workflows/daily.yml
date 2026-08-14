@@ -17,7 +17,7 @@ jobs:
       - name: 抓原價屋價格產生報表
         run: python coolpc_vga_tracker.py --quiet
       - name: 準備部署目錄
-        run: mkdir -p docs && cp vga_report.html docs/index.html && cp ram_report.html docs/ram.html
+        run: mkdir -p docs && cp vga_report.html docs/index.html && cp ram_report.html docs/ram.html && cp dgx_report.html docs/dgx.html
       - name: 部署到 Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
