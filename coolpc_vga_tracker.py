@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# CoolPC 每日價格追蹤器 v10
-# v10: +SSD/CPU/主機板/電源分頁 +30天走勢線 +90天瘦身 +失敗重試
+# CoolPC 每日價格追蹤器 v11
+# v11: CPU/主機板只追蹤工作站平台(Threadripper/Xeon、TRX50/WRX90/W790...)，電源只追蹤 2000W+
 import urllib.request, urllib.error, re, os, sys, csv, json, time
 import html as htmllib
 from datetime import datetime, timezone, timedelta
@@ -10,6 +10,10 @@ TWT = timezone(timedelta(hours=8))   # 台灣時間
 # ========== 可自行修改 ==========
 WATCH_KEYWORDS = []   # 想特別標記的型號,例如 ['RTX 5070', 'GB10']
 AUTO_OPEN_REPORT = True
+# 工作站關鍵字（想增減直接改這裡）
+WS_CPU = ['Threadripper', 'Xeon', 'EPYC']
+WS_MB = ['TRX50', 'WRX90', 'WRX80', 'TRX40', 'W790', 'W680', 'W580', 'W480']
+PSU_MIN_WATTS = 2000
 # ================================
 
 URL = 'https://www.coolpc.com.tw/evaluate.php'
@@ -21,10 +25,10 @@ HIST_FIELDS = ['日期', '時間', '產品ID', '產品名稱', '目前價格']
 
 BRANDS = ['華碩', '技嘉', '微星', 'ZOTAC', 'INNO3D', '藍寶石', '撼訊', '華擎', 'ACER', '麗臺',
           '金士頓', '美光', '芝奇', '海盜船', 'KLEVV', '十銓', 'UMAX', '威剛', 'NVIDIA', 'ALTOS',
-          'GIGABYTE', 'MSI', 'ASUS', '三星', 'Sandisk', 'WD', '創見', 'Intel', 'AMD', '海韻', '振華', '酷碼', '全漢', '安鈦克', 'CORSAIR']
+          'GIGABYTE', 'MSI', 'ASUS', '三星', 'Sandisk', 'WD', '創見', 'Intel', 'AMD', '海韻', '振華', '酷碼', '全漢', '安鈦克', 'CORSAIR', 'Superflower', 'TT']
 
 NAV = [('index.html', '🎮 顯示卡', 'vga'), ('ram.html', '🧮 記憶體', 'ram'), ('dgx.html', '🤖 DGX/GB10', 'dgx'),
-       ('ssd.html', '💾 SSD', 'ssd'), ('cpu.html', '🧠 CPU', 'cpu'), ('mb.html', '🧩 主機板', 'mb'), ('psu.html', '⚡ 電源', 'psu')]
+       ('ssd.html', '💾 SSD', 'ssd'), ('cpu.html', '🧠 工作站CPU', 'cpu'), ('mb.html', '🧩 工作站主機板', 'mb'), ('psu.html', '⚡ 電源2000W+', 'psu')]
 
 VGA_GROUPS = [
     ('RTX 5090', r'RTX\s?5090'), ('RTX 5080', r'RTX\s?5080'),
@@ -57,30 +61,20 @@ SSD_GROUPS = [
     ('2.5吋 SATA', r'2\.5|SATA'),
 ]
 CPU_GROUPS = [
-    ('AMD X3D 系列', r'X3D'),
-    ('AMD Ryzen 9', r'Ryzen\s?9|R9\b'),
-    ('AMD Ryzen 7', r'Ryzen\s?7|R7\b'),
-    ('AMD Ryzen 5', r'Ryzen\s?5|R5\b'),
-    ('AMD Ryzen 3', r'Ryzen\s?3|R3\b'),
-    ('Intel i9 / Ultra 9', r'i9[-\s]|Ultra\s?9'),
-    ('Intel i7 / Ultra 7', r'i7[-\s]|Ultra\s?7'),
-    ('Intel i5 / Ultra 5', r'i5[-\s]|Ultra\s?5'),
-    ('Intel i3', r'i3[-\s]'),
+    ('AMD Threadripper PRO', r'Threadripper\s?PRO'),
+    ('AMD Threadripper', r'Threadripper'),
+    ('Intel Xeon', r'Xeon'),
+    ('AMD EPYC', r'EPYC'),
 ]
 MB_GROUPS = [
-    ('AM5 X870/X670', r'X870|X670'),
-    ('AM5 B850/B650', r'B850|B650'),
-    ('Intel Z890/Z790', r'Z890|Z790'),
-    ('Intel B860/B760', r'B860|B760'),
+    ('AMD WRX90', r'WRX90'),
+    ('AMD TRX50', r'TRX50'),
+    ('AMD TRX40 / WRX80', r'TRX40|WRX80'),
+    ('Intel W790', r'W790'),
+    ('Intel W680', r'W680'),
+    ('Intel W580/W480', r'W580|W480'),
 ]
-PSU_GROUPS = [
-    ('1200W 以上', r'(?:1[2-9]\d{2}|[2-9]\d{3})\s?W'),
-    ('1000W 級', r'1[01]\d{2}\s?W'),
-    ('850W', r'850\s?W'),
-    ('750W', r'750\s?W'),
-    ('650W', r'650\s?W'),
-    ('550W 以下', r'[3-5]\d{2}\s?W'),
-]
+PSU_GROUPS = [('2000W 以上', r'(?:[2-9]\d{3})\s?W')]
 
 CATEGORIES = [
     {'key': 'vga', 'title': '顯示卡每日報價',
@@ -106,20 +100,23 @@ CATEGORIES = [
      'not_words': ('筆記型', '記憶體'),
      'fallback_id': '7', 'exclude': [],
      'groups': SSD_GROUPS, 'report': 'ssd_report.html'},
-    {'key': 'cpu', 'title': '處理器每日報價',
+    {'key': 'cpu', 'title': '工作站處理器每日報價',
      'header_words': ('處理器', 'CPU'), 'match_any': False,
      'not_words': ('筆記型',),
      'fallback_id': '4', 'exclude': [],
+     'include': WS_CPU,
      'groups': CPU_GROUPS, 'report': 'cpu_report.html'},
-    {'key': 'mb', 'title': '主機板每日報價',
+    {'key': 'mb', 'title': '工作站主機板每日報價',
      'header_words': ('主機板', 'MB'), 'match_any': False,
      'not_words': ('筆記型',),
      'fallback_id': '5', 'exclude': [],
+     'include': WS_MB,
      'groups': MB_GROUPS, 'report': 'mb_report.html'},
-    {'key': 'psu', 'title': '電源供應器每日報價',
+    {'key': 'psu', 'title': '電源 2000W+ 每日報價',
      'header_words': ('電源供應器',), 'match_any': True,
      'not_words': ('機殼', 'CASE'),
      'fallback_id': '15', 'exclude': [],
+     'min_watts': PSU_MIN_WATTS,
      'groups': PSU_GROUPS, 'report': 'psu_report.html'},
 ]
 
@@ -178,6 +175,10 @@ def parse_options(body, cat):
         low = name.lower()
         if any(k.lower() in low for k in cat['exclude']): continue
         if cat.get('only') and not only_hit(cat, low): continue
+        if cat.get('include') and not any(k.lower() in low for k in cat['include']): continue
+        if cat.get('min_watts'):
+            ws = [int(x) for x in re.findall(r'(\d{3,5})\s?W(?![a-zA-Z])', text)]
+            if not ws or max(ws) < cat['min_watts']: continue
         items.append({'id': val.group(1) if val else '', 'name': name, 'price': prices[-1],
                       'raw': text, 'hot': '熱賣' in text})
     return items
@@ -212,7 +213,6 @@ def get_brand(name):
     return name.split(' ')[0]
 
 def load_trends(hist_path, groups):
-    """從歷史 CSV 計算每個分組「每日最低價」，取最近 30 個有資料的日期"""
     daily = {}
     try:
         with open(hist_path, newline='', encoding='utf-8-sig') as f:
