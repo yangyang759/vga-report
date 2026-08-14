@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# CoolPC 每日價格追蹤器 v9.0
-# v9.0: 過濾↪贈品備註行 + 頁面顯示現在時間/更新時間 + 新增 DGX Spark 分頁
+# CoolPC 每日價格追蹤器 v9.2
+# v9.2: 關鍵字鎖定分類(如 DGX Spark)改為整頁掃描，網站有列就一定抓得到
 import urllib.request, urllib.error, re, os, sys, csv
 import html as htmllib
 from datetime import datetime, timezone, timedelta
@@ -109,7 +109,7 @@ def parse_options(body, cat):
         prices = [int(p.replace(',', '')) for p in re.findall(r'\$([0-9][0-9,]*)', text)]
         name = text.split('$')[0].strip().strip(',，').strip()
         if not prices or not name: continue
-        if name.startswith('↪') or name.startswith('❤'): continue   # 贈品備註/宣傳行,非商品
+        if name.startswith('↪') or name.startswith('❤'): continue
         if cat['key'] == 'vga' and ('吋' in name or '筆電' in name): continue
         low = name.lower()
         if any(k.lower() in low for k in cat['exclude']): continue
@@ -128,7 +128,7 @@ def get_brand(name):
         if name.startswith(b): return b
     return name.split(' ')[0]
 
-CSS = """*{box-sizing:border-box;margin:0;padding:0}body{background:#14151a;color:#e8e8ec;font-family:'Microsoft JhengHei',sans-serif;padding:24px}h1{font-size:22px}h2{font-size:16px;margin:18px 0 10px;color:#8ab4ff}.nav{display:flex;gap:10px;margin:10px 0;flex-wrap:wrap}.nav a{color:#8ab4ff;text-decoration:none;background:#1e2028;border:1px solid #2a2d37;padding:8px 18px;border-radius:8px;font-weight:700}.nav a.active{background:#8ab4ff;color:#14151a}.meta{color:#9aa0ab;margin:6px 0 14px;font-size:13px}.meta b{color:#e8e8ec}.toolbar{display:flex;gap:14px;align-items:center;margin-bottom:18px;position:sticky;top:0;background:#14151a;padding:10px 0;z-index:9}#q{flex:1;max-width:420px;padding:10px 14px;border-radius:8px;border:1px solid #333;background:#1e2028;color:#eee;font-size:14px}.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}.card{background:#1e2028;border:1px solid #2a2d37;border-radius:10px;padding:12px}.card .chip{color:#8ab4ff;font-weight:700}.card .low{color:#ffd75e;font-size:18px;font-weight:800;margin:4px 0}.card .model{color:#9aa0ab;font-size:11px;line-height:1.5}details.group{margin-bottom:12px;border:1px solid #2a2d37;border-radius:10px;overflow:hidden}summary{cursor:pointer;background:#1e2028;padding:12px 16px;font-weight:700}summary .min{color:#ffd75e;margin-left:10px;font-size:13px}table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:8px 12px;border-top:1px solid #23252e;text-align:left}thead th{color:#9aa0ab;background:#191b21}tbody tr:hover{background:#232530}.price{color:#ffd75e;font-weight:700;white-space:nowrap}.down{color:#5dd39e;font-weight:700}.up{color:#ff7b72;font-weight:700}.same{color:#565b66}.new{color:#8ab4ff;font-weight:700}tr.watch td:first-child{box-shadow:inset 3px 0 0 #ffd75e}@media (max-width:640px){body{padding:12px}td,th{padding:6px 8px;font-size:12px}td:nth-child(2){word-break:break-all}.card .low{font-size:16px}#q{max-width:none}}"""
+CSS = """*{box-sizing:border-box;margin:0;padding:0}body{background:#14151a;color:#e8e8ec;font-family:'Microsoft JhengHei',sans-serif;padding:24px}h1{font-size:22px}h2{font-size:16px;margin:18px 0 10px;color:#8ab4ff}.nav{display:flex;gap:10px;margin:10px 0;flex-wrap:wrap}.nav a{color:#8ab4ff;text-decoration:none;background:#1e2028;border:1px solid #2a2d37;padding:8px 18px;border-radius:8px;font-weight:700}.nav a.active{background:#8ab4ff;color:#14151a}.meta{color:#9aa0ab;margin:6px 0 14px;font-size:13px}.meta b{color:#e8e8ec}.toolbar{display:flex;gap:14px;align-items:center;margin-bottom:18px;position:sticky;top:0;background:#14151a;padding:10px 0;z-index:9}#q{flex:1;max-width:420px;padding:10px 14px;border-radius:8px;border:1px solid #333;background:#1e2028;color:#eee;font-size:14px}.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}.card{background:#1e2028;border:1px solid #2a2d37;border-radius:10px;padding:12px}.card .chip{color:#8ab4ff;font-weight:700}.card .low{color:#ffd75e;font-size:18px;font-weight:800;margin:4px 0}.card .model{color:#9aa0ab;font-size:11px;line-height:1.5}.empty{color:#9aa0ab;background:#1e2028;border:1px dashed #2a2d37;border-radius:10px;padding:24px;text-align:center;margin:20px 0}details.group{margin-bottom:12px;border:1px solid #2a2d37;border-radius:10px;overflow:hidden}summary{cursor:pointer;background:#1e2028;padding:12px 16px;font-weight:700}summary .min{color:#ffd75e;margin-left:10px;font-size:13px}table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:8px 12px;border-top:1px solid #23252e;text-align:left}thead th{color:#9aa0ab;background:#191b21}tbody tr:hover{background:#232530}.price{color:#ffd75e;font-weight:700;white-space:nowrap}.down{color:#5dd39e;font-weight:700}.up{color:#ff7b72;font-weight:700}.same{color:#565b66}.new{color:#8ab4ff;font-weight:700}tr.watch td:first-child{box-shadow:inset 3px 0 0 #ffd75e}@media (max-width:640px){body{padding:12px}td,th{padding:6px 8px;font-size:12px}td:nth-child(2){word-break:break-all}.card .low{font-size:16px}#q{max-width:none}}"""
 
 JS = """function filterRows(){var q=document.getElementById('q').value.trim().toLowerCase();var oc=document.getElementById('onlyChanged').checked;document.querySelectorAll('.group').forEach(function(g){var v=0;g.querySelectorAll('tbody tr').forEach(function(tr){var okQ=!q||tr.dataset.name.toLowerCase().includes(q);var okC=!oc||tr.dataset.changed==='1';var s=okQ&&okC;tr.style.display=s?'':'none';if(s)v++;});g.style.display=v?'':'none';if(q&&v)g.open=true;});}
 function tick(){var d=new Date();function p(n){return n<10?'0'+n:''+n;}var el=document.getElementById('nowtime');if(el){el.textContent=d.getFullYear()+'/'+p(d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}}
@@ -172,6 +172,8 @@ def build_report(cat, items, prev, prev_date, today, now):
         f'<a href="{h}" class="{"active" if k == cat["key"] else ""}">{t}</a>'
         for h, t, k in [('index.html', '🎮 顯示卡', 'vga'), ('ram.html', '🧮 記憶體', 'ram'), ('dgx.html', '🤖 DGX Spark', 'dgx')]
     ) + '</div>'
+    body_html = ''.join(groups_html) if items else '<div class="empty">今日暫無資料（可能缺貨或網站異動），明天再來看看！</div>'
+    cards_html = ''.join(cards) if items else ''
     return ('<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             f'<title>{cat["title"]} {today}</title><style>{CSS}</style></head><body>'
@@ -180,16 +182,19 @@ def build_report(cat, items, prev, prev_date, today, now):
             f'降價 {down} 項 ／ 漲價 {up} 項｜比較基準：{prev_date or "無(首日)"}</div>'
             f'<div class="toolbar"><input id="q" placeholder="🔍 搜尋品牌/型號..." oninput="filterRows()">'
             '<label><input type="checkbox" id="onlyChanged" onchange="filterRows()"> 只看價格異動</label></div>'
-            '<h2>💡 各分組最低價</h2><div class="cards">' + ''.join(cards) + '</div>'
-            '<h2>📋 分組明細（點標題展開）</h2>' + ''.join(groups_html) + f'<script>{JS}</script></body></html>')
+            '<h2>💡 各分組最低價</h2><div class="cards">' + cards_html + '</div>'
+            '<h2>📋 分組明細（點標題展開）</h2>' + body_html + f'<script>{JS}</script></body></html>')
 
 def process_category(cat, page, today, now):
     log(f'--- 處理 {cat["title"]} ---')
-    body = find_section(page, cat)
-    if not body: log('找不到分類，跳過'); return
-    items = parse_options(body, cat)
+    if cat.get('only'):
+        body = page   # 關鍵字鎖定型：直接掃整頁所有商品，不受分類位置影響
+        log('整頁掃描模式（關鍵字鎖定）')
+    else:
+        body = find_section(page, cat)
+        if not body: log('找不到分類，將產生空報表')
+    items = parse_options(body, cat) if body else []
     log(f'共解析到 {len(items)} 項')
-    if not items: return
 
     prev, prev_date = {}, None
     cand = sorted((f, m.group(1)) for f in os.listdir(DATA_DIR)
@@ -201,24 +206,24 @@ def process_category(cat, page, today, now):
                 try: prev[norm_name(row['產品名稱'])] = int(row['目前價格'])
                 except Exception: pass
 
-    with open(os.path.join(DATA_DIR, f'{cat["key"]}_{today}.csv'), 'w', newline='', encoding='utf-8-sig') as f:
-        w = csv.writer(f)
-        w.writerow(['產品ID', '產品名稱', '目前價格', '熱賣', '原始文字'])
-        for it in items: w.writerow([it['id'], it['name'], it['price'], '是' if it['hot'] else '', it['raw']])
-
-    hist = os.path.join(DATA_DIR, f'{cat["key"]}_history.csv')
-    newf = not os.path.exists(hist)
-    with open(hist, 'a', newline='', encoding='utf-8-sig') as f:
-        w = csv.writer(f)
-        if newf: w.writerow(['日期', '時間', '產品ID', '產品名稱', '目前價格'])
-        for it in items: w.writerow([today, now.strftime('%H:%M'), it['id'], it['name'], it['price']])
+    if items:
+        with open(os.path.join(DATA_DIR, f'{cat["key"]}_{today}.csv'), 'w', newline='', encoding='utf-8-sig') as f:
+            w = csv.writer(f)
+            w.writerow(['產品ID', '產品名稱', '目前價格', '熱賣', '原始文字'])
+            for it in items: w.writerow([it['id'], it['name'], it['price'], '是' if it['hot'] else '', it['raw']])
+        hist = os.path.join(DATA_DIR, f'{cat["key"]}_history.csv')
+        newf = not os.path.exists(hist)
+        with open(hist, 'a', newline='', encoding='utf-8-sig') as f:
+            w = csv.writer(f)
+            if newf: w.writerow(['日期', '時間', '產品ID', '產品名稱', '目前價格'])
+            for it in items: w.writerow([today, now.strftime('%H:%M'), it['id'], it['name'], it['price']])
 
     report_html = build_report(cat, items, prev, prev_date, today, now)
     report_path = os.path.join(BASE_DIR, cat['report'])
     with open(report_path, 'w', encoding='utf-8') as f: f.write(report_html)
     log(f'報表已產生: {report_path}')
 
-    if prev:
+    if prev and items:
         ch = [it for it in items if norm_name(it['name']) in prev and prev[norm_name(it['name'])] != it['price']]
         log(f'與 {prev_date} 相比: 異動 {len(ch)} 項')
 
