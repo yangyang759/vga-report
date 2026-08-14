@@ -1,20 +1,16 @@
 # -*- coding: utf-8 -*-
-# CoolPC 顯示卡每日價格追蹤器 v6.0
-# v6.0: 新增專業卡晶片分類(RTX A/Ada/PRO Blackwell) + 報表更名為「顯示卡每日報價」
+# CoolPC 顯示卡每日價格追蹤器 v7.0
+# v7.0: 時間固定台灣時間 UTC+8（修正 GitHub 伺服器慢 8 小時）
 import urllib.request, urllib.error, re, os, sys, csv
-import html as htmllib, base64, json
+import html as htmllib
 from datetime import datetime, timezone, timedelta
-TWT = timezone(timedelta(hours=8))   # 固定台灣時間 UTC+8
+
+TWT = timezone(timedelta(hours=8))   # 台灣時間
 
 # ========== 可自行修改 ==========
 WATCH_KEYWORDS = []   # 想特別標記的型號,例如 ['RTX 5070']
 EXCLUDE_KEYWORDS = ['支架', '支撐架', 'HOLDER', '千斤頂', 'AI BOX', '外接式']
 AUTO_OPEN_REPORT = True
-
-# --- 手機固定連結同步（不用就留空）---
-GITHUB_USER  = ''
-GITHUB_REPO  = ''
-GITHUB_TOKEN = ''
 # ================================
 
 URL = 'https://www.coolpc.com.tw/evaluate.php'
@@ -143,28 +139,8 @@ def build_report(items, prev, prev_date, today, now):
             '<h2>💡 各晶片最低價</h2><div class="cards">' + ''.join(cards) + '</div>'
             '<h2>📋 分組明細（點標題展開）</h2>' + ''.join(groups_html) + f'<script>{JS}</script></body></html>')
 
-def upload_github(html_text, today):
-    if not (GITHUB_USER and GITHUB_REPO and GITHUB_TOKEN): return
-    api = f'https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/contents/docs/index.html'
-    hdr = {'Authorization': f'token {GITHUB_TOKEN}', 'Accept': 'application/vnd.github+json', 'User-Agent': UA}
-    sha = None
-    try:
-        with urllib.request.urlopen(urllib.request.Request(api, headers=hdr), timeout=30) as r:
-            sha = json.load(r).get('sha')
-    except urllib.error.HTTPError as e:
-        if e.code != 404:
-            log('GitHub 上傳失敗:', e.code); return
-    payload = {'message': f'VGA report {today}', 'content': base64.b64encode(html_text.encode('utf-8')).decode()}
-    if sha: payload['sha'] = sha
-    req = urllib.request.Request(api, data=json.dumps(payload).encode('utf-8'), headers=hdr, method='PUT')
-    try:
-        with urllib.request.urlopen(req, timeout=60):
-            log(f'已上傳 GitHub! 手機連結: https://{GITHUB_USER}.github.io/{GITHUB_REPO}/')
-    except urllib.error.HTTPError as e:
-        log('GitHub 上傳失敗:', e.code, e.read().decode()[:200])
-
 def main():
-      now = datetime.now(TWT); today = now.strftime('%Y-%m-%d')
+    now = datetime.now(TWT); today = now.strftime('%Y-%m-%d')
     os.makedirs(DATA_DIR, exist_ok=True)
     body = find_vga_section(fetch_html())[1]
     if not body: log('找不到顯示卡分類'); sys.exit(1)
@@ -198,8 +174,6 @@ def main():
     report_path = os.path.join(BASE_DIR, 'vga_report.html')
     with open(report_path, 'w', encoding='utf-8') as f: f.write(report_html)
     log(f'報表已產生: {report_path}')
-
-    upload_github(report_html, today)
 
     if prev:
         ch = [(it, prev[norm_name(it['name'])]) for it in items
