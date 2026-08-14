@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-# CoolPC 每日價格追蹤器 v9.5
-# v9.5: 過濾顯卡分類轉接線配件 + 搜尋連動上方最低價卡片(即時重算)
-import urllib.request, urllib.error, re, os, sys, csv
+# CoolPC 每日價格追蹤器 v10
+# v10: +SSD/CPU/主機板/電源分頁 +30天走勢線 +90天瘦身 +失敗重試
+import urllib.request, urllib.error, re, os, sys, csv, json, time
 import html as htmllib
 from datetime import datetime, timezone, timedelta
 
@@ -17,10 +17,14 @@ UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36')
 BASE_DIR = os.getcwd()
 DATA_DIR = os.path.join(BASE_DIR, 'coolpc_vga_data')
+HIST_FIELDS = ['日期', '時間', '產品ID', '產品名稱', '目前價格']
 
 BRANDS = ['華碩', '技嘉', '微星', 'ZOTAC', 'INNO3D', '藍寶石', '撼訊', '華擎', 'ACER', '麗臺',
           '金士頓', '美光', '芝奇', '海盜船', 'KLEVV', '十銓', 'UMAX', '威剛', 'NVIDIA', 'ALTOS',
-          'GIGABYTE', 'MSI', 'ASUS']
+          'GIGABYTE', 'MSI', 'ASUS', '三星', 'Sandisk', 'WD', '創見', 'Intel', 'AMD', '海韻', '振華', '酷碼', '全漢', '安鈦克', 'CORSAIR']
+
+NAV = [('index.html', '🎮 顯示卡', 'vga'), ('ram.html', '🧮 記憶體', 'ram'), ('dgx.html', '🤖 DGX/GB10', 'dgx'),
+       ('ssd.html', '💾 SSD', 'ssd'), ('cpu.html', '🧠 CPU', 'cpu'), ('mb.html', '🧩 主機板', 'mb'), ('psu.html', '⚡ 電源', 'psu')]
 
 VGA_GROUPS = [
     ('RTX 5090', r'RTX\s?5090'), ('RTX 5080', r'RTX\s?5080'),
@@ -37,7 +41,6 @@ VGA_GROUPS = [
     ('R9700 AI 卡', r'R9700'), ('ARC B580/B70', r'B580|B70'),
     ('GT 1030', r'GT\s?1030'), ('GT 730', r'GT\s?730|N730'), ('GT 710/210', r'GT\s?710|N210'),
 ]
-
 RAM_GROUPS = [
     ('ECC/伺服器', r'ECC'),
     ('DDR5 筆電', r'(?=.*NB)(?=.*(?:DDR5|D5-\d))'),
@@ -46,8 +49,38 @@ RAM_GROUPS = [
     ('DDR4 桌上型', r'(?:DDR4|D4-\d)'),
     ('DDR3', r'DDR3'),
 ]
-
 DGX_GROUPS = [('GB10 / DGX Spark', r'GB10|DGX')]
+SSD_GROUPS = [
+    ('M.2 PCIe 5.0', r'(?:PCIe|Gen)\s?5'),
+    ('M.2 PCIe 4.0', r'(?:PCIe|Gen)\s?4'),
+    ('M.2 / NVMe 其他', r'M\.2|NVMe'),
+    ('2.5吋 SATA', r'2\.5|SATA'),
+]
+CPU_GROUPS = [
+    ('AMD X3D 系列', r'X3D'),
+    ('AMD Ryzen 9', r'Ryzen\s?9|R9\b'),
+    ('AMD Ryzen 7', r'Ryzen\s?7|R7\b'),
+    ('AMD Ryzen 5', r'Ryzen\s?5|R5\b'),
+    ('AMD Ryzen 3', r'Ryzen\s?3|R3\b'),
+    ('Intel i9 / Ultra 9', r'i9[-\s]|Ultra\s?9'),
+    ('Intel i7 / Ultra 7', r'i7[-\s]|Ultra\s?7'),
+    ('Intel i5 / Ultra 5', r'i5[-\s]|Ultra\s?5'),
+    ('Intel i3', r'i3[-\s]'),
+]
+MB_GROUPS = [
+    ('AM5 X870/X670', r'X870|X670'),
+    ('AM5 B850/B650', r'B850|B650'),
+    ('Intel Z890/Z790', r'Z890|Z790'),
+    ('Intel B860/B760', r'B860|B760'),
+]
+PSU_GROUPS = [
+    ('1200W 以上', r'(?:1[2-9]\d{2}|[2-9]\d{3})\s?W'),
+    ('1000W 級', r'1[01]\d{2}\s?W'),
+    ('850W', r'850\s?W'),
+    ('750W', r'750\s?W'),
+    ('650W', r'650\s?W'),
+    ('550W 以下', r'[3-5]\d{2}\s?W'),
+]
 
 CATEGORIES = [
     {'key': 'vga', 'title': '顯示卡每日報價',
@@ -60,16 +93,34 @@ CATEGORIES = [
     {'key': 'ram', 'title': '記憶體每日報價',
      'header_words': ('記憶體', 'RAM'), 'match_any': False,
      'not_words': ('筆記型', '固態硬碟', '顯示卡'),
-     'fallback_id': '6',
-     'exclude': [],
+     'fallback_id': '6', 'exclude': [],
      'groups': RAM_GROUPS, 'report': 'ram_report.html'},
     {'key': 'dgx', 'title': 'DGX Spark / GB10 每日報價',
      'header_words': ('品牌小主機',), 'match_any': True,
-     'not_words': (),
-     'fallback_id': '1',
+     'not_words': (), 'fallback_id': '1',
      'exclude': ['連接線', 'Cable'],
      'only': ['GB10', 'DGX Spark'], 'only_any': True,
      'groups': DGX_GROUPS, 'report': 'dgx_report.html'},
+    {'key': 'ssd', 'title': '固態硬碟每日報價',
+     'header_words': ('固態硬碟', 'SSD'), 'match_any': False,
+     'not_words': ('筆記型', '記憶體'),
+     'fallback_id': '7', 'exclude': [],
+     'groups': SSD_GROUPS, 'report': 'ssd_report.html'},
+    {'key': 'cpu', 'title': '處理器每日報價',
+     'header_words': ('處理器', 'CPU'), 'match_any': False,
+     'not_words': ('筆記型',),
+     'fallback_id': '4', 'exclude': [],
+     'groups': CPU_GROUPS, 'report': 'cpu_report.html'},
+    {'key': 'mb', 'title': '主機板每日報價',
+     'header_words': ('主機板', 'MB'), 'match_any': False,
+     'not_words': ('筆記型',),
+     'fallback_id': '5', 'exclude': [],
+     'groups': MB_GROUPS, 'report': 'mb_report.html'},
+    {'key': 'psu', 'title': '電源供應器每日報價',
+     'header_words': ('電源供應器',), 'match_any': True,
+     'not_words': ('機殼', 'CASE'),
+     'fallback_id': '15', 'exclude': [],
+     'groups': PSU_GROUPS, 'report': 'psu_report.html'},
 ]
 
 def log(*a): print('[Tracker]', *a)
@@ -79,13 +130,19 @@ def norm_name(n):
     return n.replace(' ', '').replace('\u3000', '').strip()
 
 def fetch_html():
-    log('下載原價屋估價頁中...')
-    req = urllib.request.Request(URL, headers={'User-Agent': UA})
-    with urllib.request.urlopen(req, timeout=120) as r: raw = r.read()
-    for enc in ('big5', 'big5-hkscs', 'utf-8'):
-        try: return raw.decode(enc)
-        except (UnicodeDecodeError, LookupError): pass
-    return raw.decode('big5', errors='ignore')
+    last = None
+    for i in range(3):   # 失敗重試 3 次
+        try:
+            log(f'下載原價屋估價頁（第 {i+1}/3 次）...')
+            req = urllib.request.Request(URL, headers={'User-Agent': UA})
+            with urllib.request.urlopen(req, timeout=120) as r: raw = r.read()
+            for enc in ('big5', 'big5-hkscs', 'utf-8'):
+                try: return raw.decode(enc)
+                except (UnicodeDecodeError, LookupError): pass
+            return raw.decode('big5', errors='ignore')
+        except Exception as e:
+            last = e; log(f'抓取失敗：{e}，10 秒後重試'); time.sleep(10)
+    raise last
 
 def find_section(page, cat):
     pat = re.compile(r'<select\b[^>]*name\s*=\s*[\'"]?n(\d+)[^>]*>(.*?)</select>', re.I | re.S)
@@ -154,13 +211,52 @@ def get_brand(name):
         if name.startswith(b): return b
     return name.split(' ')[0]
 
-CSS = """*{box-sizing:border-box;margin:0;padding:0}body{background:#14151a;color:#e8e8ec;font-family:'Microsoft JhengHei',sans-serif;padding:24px}h1{font-size:22px}h2{font-size:16px;margin:18px 0 10px;color:#8ab4ff}.nav{display:flex;gap:10px;margin:10px 0;flex-wrap:wrap}.nav a{color:#8ab4ff;text-decoration:none;background:#1e2028;border:1px solid #2a2d37;padding:8px 18px;border-radius:8px;font-weight:700}.nav a.active{background:#8ab4ff;color:#14151a}.meta{color:#9aa0ab;margin:6px 0 14px;font-size:13px}.meta b{color:#e8e8ec}.toolbar{display:flex;gap:14px;align-items:center;margin-bottom:18px;position:sticky;top:0;background:#14151a;padding:10px 0;z-index:9}#q{flex:1;max-width:420px;padding:10px 14px;border-radius:8px;border:1px solid #333;background:#1e2028;color:#eee;font-size:14px}.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}.card{background:#1e2028;border:1px solid #2a2d37;border-radius:10px;padding:12px}.card .chip{color:#8ab4ff;font-weight:700}.card .low{color:#ffd75e;font-size:18px;font-weight:800;margin:4px 0}.card .model{color:#9aa0ab;font-size:11px;line-height:1.5}.empty{color:#9aa0ab;background:#1e2028;border:1px dashed #2a2d37;border-radius:10px;padding:24px;text-align:center;margin:20px 0}details.group{margin-bottom:12px;border:1px solid #2a2d37;border-radius:10px;overflow:hidden}summary{cursor:pointer;background:#1e2028;padding:12px 16px;font-weight:700}summary .min{color:#ffd75e;margin-left:10px;font-size:13px}table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:8px 12px;border-top:1px solid #23252e;text-align:left}thead th{color:#9aa0ab;background:#191b21}tbody tr:hover{background:#232530}.price{color:#ffd75e;font-weight:700;white-space:nowrap}.down{color:#5dd39e;font-weight:700}.up{color:#ff7b72;font-weight:700}.same{color:#565b66}.new{color:#8ab4ff;font-weight:700}tr.watch td:first-child{box-shadow:inset 3px 0 0 #ffd75e}@media (max-width:640px){body{padding:12px}td,th{padding:6px 8px;font-size:12px}td:nth-child(2){word-break:break-all}.card .low{font-size:16px}#q{max-width:none}}"""
+def load_trends(hist_path, groups):
+    """從歷史 CSV 計算每個分組「每日最低價」，取最近 30 個有資料的日期"""
+    daily = {}
+    try:
+        with open(hist_path, newline='', encoding='utf-8-sig') as f:
+            for row in csv.DictReader(f):
+                d, p = row['日期'], int(row['目前價格'])
+                g = detect_group(row['產品名稱'], groups)
+                cur = daily.setdefault(d, {}).get(g)
+                if cur is None or p < cur: daily[d][g] = p
+    except (FileNotFoundError, ValueError, KeyError):
+        pass
+    trends = {}
+    for d in sorted(daily.keys())[-30:]:
+        for g, p in daily[d].items():
+            trends.setdefault(g, []).append([d, p])
+    return trends
 
-JS = """function filterRows(){var q=document.getElementById('q').value.trim().toLowerCase();var oc=document.getElementById('onlyChanged').checked;document.querySelectorAll('.group').forEach(function(g){var vis=[];g.querySelectorAll('tbody tr').forEach(function(tr){var okQ=!q||tr.dataset.name.toLowerCase().includes(q);var okC=!oc||tr.dataset.changed==='1';var s=okQ&&okC;tr.style.display=s?'':'none';if(s)vis.push(tr);});g.style.display=vis.length?'':'none';if(q&&vis.length)g.open=true;var card=document.querySelector('.card[data-chip="'+g.dataset.chip+'"]');if(card){if(!vis.length){card.style.display='none';}else{card.style.display='';var m=vis[0];vis.forEach(function(t){if(+t.dataset.price<+m.dataset.price)m=t;});card.querySelector('.low').textContent='$'+Number(m.dataset.price).toLocaleString('en-US');card.querySelector('.model').textContent=m.dataset.model;}}});}
+def prune_data(keys, today, days=90):
+    cutoff = (datetime.strptime(today, '%Y-%m-%d') - timedelta(days=days)).strftime('%Y-%m-%d')
+    for f in os.listdir(DATA_DIR):
+        m = re.match(r'[a-z]+_(\d{4}-\d{2}-\d{2})\.csv$', f)
+        if m and m.group(1) < cutoff:
+            os.remove(os.path.join(DATA_DIR, f)); log(f'刪除過期快照：{f}')
+    for key in keys:
+        hp = os.path.join(DATA_DIR, key + '_history.csv')
+        if not os.path.exists(hp): continue
+        with open(hp, newline='', encoding='utf-8-sig') as f:
+            rows = list(csv.DictReader(f))
+        kept = [r for r in rows if r['日期'] >= cutoff]
+        if len(kept) < len(rows):
+            with open(hp, 'w', newline='', encoding='utf-8-sig') as f:
+                w = csv.DictWriter(f, fieldnames=HIST_FIELDS)
+                w.writeheader(); w.writerows(kept)
+            log(f'{key} 歷史瘦身：{len(rows)} → {len(kept)} 筆')
+
+CSS = """*{box-sizing:border-box;margin:0;padding:0}body{background:#14151a;color:#e8e8ec;font-family:'Microsoft JhengHei',sans-serif;padding:24px}h1{font-size:22px}h2{font-size:16px;margin:18px 0 10px;color:#8ab4ff}.nav{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap}.nav a{color:#8ab4ff;text-decoration:none;background:#1e2028;border:1px solid #2a2d37;padding:7px 14px;border-radius:8px;font-weight:700;font-size:13px}.nav a.active{background:#8ab4ff;color:#14151a}.meta{color:#9aa0ab;margin:6px 0 14px;font-size:13px}.meta b{color:#e8e8ec}.toolbar{display:flex;gap:14px;align-items:center;margin-bottom:18px;position:sticky;top:0;background:#14151a;padding:10px 0;z-index:9}#q{flex:1;max-width:420px;padding:10px 14px;border-radius:8px;border:1px solid #333;background:#1e2028;color:#eee;font-size:14px}.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}.card{background:#1e2028;border:1px solid #2a2d37;border-radius:10px;padding:12px}.card .chip{color:#8ab4ff;font-weight:700}.card .low{color:#ffd75e;font-size:18px;font-weight:800;margin:4px 0}.card .model{color:#9aa0ab;font-size:11px;line-height:1.5}.spark{margin-top:6px}.spark svg{display:block}.empty{color:#9aa0ab;background:#1e2028;border:1px dashed #2a2d37;border-radius:10px;padding:24px;text-align:center;margin:20px 0}details.group{margin-bottom:12px;border:1px solid #2a2d37;border-radius:10px;overflow:hidden}summary{cursor:pointer;background:#1e2028;padding:12px 16px;font-weight:700}summary .min{color:#ffd75e;margin-left:10px;font-size:13px}table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:8px 12px;border-top:1px solid #23252e;text-align:left}thead th{color:#9aa0ab;background:#191b21}tbody tr:hover{background:#232530}.price{color:#ffd75e;font-weight:700;white-space:nowrap}.down{color:#5dd39e;font-weight:700}.up{color:#ff7b72;font-weight:700}.same{color:#565b66}.new{color:#8ab4ff;font-weight:700}tr.watch td:first-child{box-shadow:inset 3px 0 0 #ffd75e}@media (max-width:640px){body{padding:12px}td,th{padding:6px 8px;font-size:12px}td:nth-child(2){word-break:break-all}.card .low{font-size:16px}#q{max-width:none}}"""
+
+JS = """var TRENDS=window.TRENDS||{};
+function spark(el,pts){if(!el||!pts||pts.length<2)return;var w=170,h=34,min=Infinity,max=-Infinity;pts.forEach(function(p){if(p[1]<min)min=p[1];if(p[1]>max)max=p[1];});var rng=(max-min)||1,step=w/(pts.length-1),d='';pts.forEach(function(p,i){var x=i*step,y=h-4-((p[1]-min)/rng)*(h-8);d+=(i?'L':'M')+x.toFixed(1)+','+y.toFixed(1);});el.innerHTML='<svg viewBox="0 0 '+w+' '+h+'" width="'+w+'" height="'+h+'"><path d="'+d+'" fill="none" stroke="#5dd39e" stroke-width="2"/></svg><span style="color:#565b66;font-size:10px">30天最低價走勢 '+min.toLocaleString()+' ~ '+max.toLocaleString()+'</span>';}
+function filterRows(){var q=document.getElementById('q').value.trim().toLowerCase();var oc=document.getElementById('onlyChanged').checked;document.querySelectorAll('.group').forEach(function(g){var vis=[];g.querySelectorAll('tbody tr').forEach(function(tr){var okQ=!q||tr.dataset.name.toLowerCase().includes(q);var okC=!oc||tr.dataset.changed==='1';var s=okQ&&okC;tr.style.display=s?'':'none';if(s)vis.push(tr);});g.style.display=vis.length?'':'none';if(q&&vis.length)g.open=true;var card=document.querySelector('.card[data-chip="'+g.dataset.chip+'"]');if(card){if(!vis.length){card.style.display='none';}else{card.style.display='';var m=vis[0];vis.forEach(function(t){if(+t.dataset.price<+m.dataset.price)m=t;});card.querySelector('.low').textContent='$'+Number(m.dataset.price).toLocaleString('en-US');card.querySelector('.model').textContent=m.dataset.model;}}});}
 function tick(){var d=new Date();function p(n){return n<10?'0'+n:''+n;}var el=document.getElementById('nowtime');if(el){el.textContent=d.getFullYear()+'/'+p(d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}}
-tick();setInterval(tick,1000);"""
+tick();setInterval(tick,1000);
+document.querySelectorAll('.card').forEach(function(c){spark(c.querySelector('.spark'),TRENDS[c.dataset.chip]);});"""
 
-def build_report(cat, items, prev, prev_date, today, now):
+def build_report(cat, items, prev, prev_date, today, now, trends):
     groups = {}
     for it in items: groups.setdefault(detect_group(it['name'], cat['groups']), []).append(it)
     order = [g[0] for g in cat['groups']] + ['其他']
@@ -172,7 +268,7 @@ def build_report(cat, items, prev, prev_date, today, now):
         g.sort(key=lambda x: x['price'])
         low = g[0]
         chip_attr = htmllib.escape(label, quote=True)
-        cards.append(f'<div class="card" data-chip="{chip_attr}"><div class="chip">{label}</div><div class="low">${low["price"]:,}</div><div class="model">{htmllib.escape(low["name"])}</div></div>')
+        cards.append(f'<div class="card" data-chip="{chip_attr}"><div class="chip">{label}</div><div class="low">${low["price"]:,}</div><div class="model">{htmllib.escape(low["name"])}</div><div class="spark"></div></div>')
         rows = []
         for it in g:
             old = prev.get(norm_name(it['name']))
@@ -197,11 +293,10 @@ def build_report(cat, items, prev, prev_date, today, now):
     down = sum(1 for it in items if norm_name(it['name']) in prev and prev[norm_name(it['name'])] > it['price'])
     up = sum(1 for it in items if norm_name(it['name']) in prev and prev[norm_name(it['name'])] < it['price'])
     nav = '<div class="nav">' + ''.join(
-        f'<a href="{h}" class="{"active" if k == cat["key"] else ""}">{t}</a>'
-        for h, t, k in [('index.html', '🎮 顯示卡', 'vga'), ('ram.html', '🧮 記憶體', 'ram'), ('dgx.html', '🤖 DGX/GB10', 'dgx')]
-    ) + '</div>'
+        f'<a href="{h}" class="{"active" if k == cat["key"] else ""}">{t}</a>' for h, t, k in NAV) + '</div>'
     body_html = ''.join(groups_html) if items else '<div class="empty">今日暫無資料（可能缺貨或網站異動），明天再來看看！</div>'
     cards_html = ''.join(cards) if items else ''
+    trends_json = json.dumps(trends, ensure_ascii=False)
     return ('<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             f'<title>{cat["title"]} {today}</title><style>{CSS}</style></head><body>'
@@ -210,8 +305,9 @@ def build_report(cat, items, prev, prev_date, today, now):
             f'降價 {down} 項 ／ 漲價 {up} 項｜比較基準：{prev_date or "無(首日)"}</div>'
             f'<div class="toolbar"><input id="q" placeholder="🔍 搜尋品牌/型號，上方最低價會一起篩選..." oninput="filterRows()">'
             '<label><input type="checkbox" id="onlyChanged" onchange="filterRows()"> 只看價格異動</label></div>'
-            '<h2>💡 各分組最低價</h2><div class="cards">' + cards_html + '</div>'
-            '<h2>📋 分組明細（點標題展開）</h2>' + body_html + f'<script>{JS}</script></body></html>')
+            '<h2>💡 各分組最低價（含 30 天走勢）</h2><div class="cards">' + cards_html + '</div>'
+            '<h2>📋 分組明細（點標題展開）</h2>' + body_html +
+            f'<script>window.TRENDS={trends_json};{JS}</script></body></html>')
 
 def process_category(cat, page, today, now):
     log(f'--- 處理 {cat["title"]} ---')
@@ -230,12 +326,6 @@ def process_category(cat, page, today, now):
         items.extend(extra)
         log(f'原始碼關鍵字掃描補上 {len(extra)} 項')
     log(f'共解析到 {len(items)} 項')
-    if cat.get('only') and not items:
-        m2 = re.search(re.escape(cat['only'][0]), page, re.I)
-        if m2:
-            log('診斷-關鍵字上下文:', repr(page[max(0, m2.start()-80):m2.start()+120]))
-        else:
-            log('診斷-關鍵字完全不在原始碼中 → 資料為瀏覽器端動態載入，需改抓資料介面')
 
     prev, prev_date = {}, None
     cand = sorted((f, m.group(1)) for f in os.listdir(DATA_DIR)
@@ -256,10 +346,11 @@ def process_category(cat, page, today, now):
         newf = not os.path.exists(hist)
         with open(hist, 'a', newline='', encoding='utf-8-sig') as f:
             w = csv.writer(f)
-            if newf: w.writerow(['日期', '時間', '產品ID', '產品名稱', '目前價格'])
+            if newf: w.writerow(HIST_FIELDS)
             for it in items: w.writerow([today, now.strftime('%H:%M'), it['id'], it['name'], it['price']])
 
-    report_html = build_report(cat, items, prev, prev_date, today, now)
+    trends = load_trends(os.path.join(DATA_DIR, f'{cat["key"]}_history.csv'), cat['groups'])
+    report_html = build_report(cat, items, prev, prev_date, today, now, trends)
     report_path = os.path.join(BASE_DIR, cat['report'])
     with open(report_path, 'w', encoding='utf-8') as f: f.write(report_html)
     log(f'報表已產生: {report_path}')
@@ -274,6 +365,7 @@ def main():
     page = fetch_html()
     for cat in CATEGORIES:
         process_category(cat, page, today, now)
+    prune_data([c['key'] for c in CATEGORIES], today)
     if AUTO_OPEN_REPORT and '--quiet' not in sys.argv:
         try: os.startfile(os.path.join(BASE_DIR, 'vga_report.html'))
         except Exception: pass
