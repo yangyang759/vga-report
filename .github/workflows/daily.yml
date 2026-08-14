@@ -2,9 +2,12 @@ name: daily-vga-report
 
 on:
   schedule:
-    - cron: "0 4 * * *"   # 台灣 12:00
-    - cron: "0 12 * * *"  # 台灣 20:00（備援）
+    - cron: "0 1 * * *"    # UTC 01:00 = 台灣 09:00
+    - cron: "0 13 * * *"   # UTC 13:00 = 台灣 21:00
   workflow_dispatch: {}
+
+permissions:
+  contents: write   # 讓價格歷史存回倉庫，漲跌與走勢圖才有資料
 
 jobs:
   deploy:
@@ -16,8 +19,23 @@ jobs:
           python-version: "3.12"
       - name: 抓原價屋價格產生報表
         run: python coolpc_vga_tracker.py --quiet
+      - name: 價格歷史存回倉庫
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add coolpc_vga_data
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: 價格資料 $(date -u +%Y-%m-%d %H:%M)"
+            git push
+          fi
       - name: 準備部署目錄
-        run: mkdir -p docs && cp vga_report.html docs/index.html && cp ram_report.html docs/ram.html && cp dgx_report.html docs/dgx.html
+        run: |
+          mkdir -p docs
+          cp -f vga_report.html docs/index.html
+          for f in ram dgx ssd cpu mb psu; do
+            [ -f ${f}_report.html ] && cp -f ${f}_report.html docs/${f}.html
+          done
+          true
       - name: 部署到 Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
