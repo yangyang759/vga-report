@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# CoolPC 每日價格追蹤器 v9.4
-# v9.4: DGX 群組改用 GB10/DGX Spark 雙關鍵字 + 原始碼診斷日誌
+# CoolPC 每日價格追蹤器 v9.5
+# v9.5: 過濾顯卡分類轉接線配件 + 搜尋連動上方最低價卡片(即時重算)
 import urllib.request, urllib.error, re, os, sys, csv
 import html as htmllib
 from datetime import datetime, timezone, timedelta
@@ -54,7 +54,8 @@ CATEGORIES = [
      'header_words': ('顯示卡', 'VGA'), 'match_any': True,
      'not_words': ('筆記型', '電競主機', '品牌小主機', 'AIO'),
      'fallback_id': '12',
-     'exclude': ['支架', '支撐架', 'HOLDER', '千斤頂', 'AI BOX', '外接式'],
+     'exclude': ['支架', '支撐架', 'HOLDER', '千斤頂', 'AI BOX', '外接式',
+                 '轉接', '連接線', '線材', 'Cable', '轉接頭'],
      'groups': VGA_GROUPS, 'report': 'vga_report.html'},
     {'key': 'ram', 'title': '記憶體每日報價',
      'header_words': ('記憶體', 'RAM'), 'match_any': False,
@@ -125,7 +126,6 @@ def parse_options(body, cat):
     return items
 
 def parse_keyword_items(page, cat):
-    """直接掃原始 HTML 文字：抓「…關鍵字…, $價格」，不依賴 option 標籤結構"""
     items, seen = [], set()
     for kw in cat.get('only', []):
         pat = re.compile(r'([^<>\n]{0,80}' + re.escape(kw) + r'[^<>\n]{0,160}?),?\s*\$([0-9][0-9,]*)', re.I)
@@ -156,7 +156,7 @@ def get_brand(name):
 
 CSS = """*{box-sizing:border-box;margin:0;padding:0}body{background:#14151a;color:#e8e8ec;font-family:'Microsoft JhengHei',sans-serif;padding:24px}h1{font-size:22px}h2{font-size:16px;margin:18px 0 10px;color:#8ab4ff}.nav{display:flex;gap:10px;margin:10px 0;flex-wrap:wrap}.nav a{color:#8ab4ff;text-decoration:none;background:#1e2028;border:1px solid #2a2d37;padding:8px 18px;border-radius:8px;font-weight:700}.nav a.active{background:#8ab4ff;color:#14151a}.meta{color:#9aa0ab;margin:6px 0 14px;font-size:13px}.meta b{color:#e8e8ec}.toolbar{display:flex;gap:14px;align-items:center;margin-bottom:18px;position:sticky;top:0;background:#14151a;padding:10px 0;z-index:9}#q{flex:1;max-width:420px;padding:10px 14px;border-radius:8px;border:1px solid #333;background:#1e2028;color:#eee;font-size:14px}.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}.card{background:#1e2028;border:1px solid #2a2d37;border-radius:10px;padding:12px}.card .chip{color:#8ab4ff;font-weight:700}.card .low{color:#ffd75e;font-size:18px;font-weight:800;margin:4px 0}.card .model{color:#9aa0ab;font-size:11px;line-height:1.5}.empty{color:#9aa0ab;background:#1e2028;border:1px dashed #2a2d37;border-radius:10px;padding:24px;text-align:center;margin:20px 0}details.group{margin-bottom:12px;border:1px solid #2a2d37;border-radius:10px;overflow:hidden}summary{cursor:pointer;background:#1e2028;padding:12px 16px;font-weight:700}summary .min{color:#ffd75e;margin-left:10px;font-size:13px}table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:8px 12px;border-top:1px solid #23252e;text-align:left}thead th{color:#9aa0ab;background:#191b21}tbody tr:hover{background:#232530}.price{color:#ffd75e;font-weight:700;white-space:nowrap}.down{color:#5dd39e;font-weight:700}.up{color:#ff7b72;font-weight:700}.same{color:#565b66}.new{color:#8ab4ff;font-weight:700}tr.watch td:first-child{box-shadow:inset 3px 0 0 #ffd75e}@media (max-width:640px){body{padding:12px}td,th{padding:6px 8px;font-size:12px}td:nth-child(2){word-break:break-all}.card .low{font-size:16px}#q{max-width:none}}"""
 
-JS = """function filterRows(){var q=document.getElementById('q').value.trim().toLowerCase();var oc=document.getElementById('onlyChanged').checked;document.querySelectorAll('.group').forEach(function(g){var v=0;g.querySelectorAll('tbody tr').forEach(function(tr){var okQ=!q||tr.dataset.name.toLowerCase().includes(q);var okC=!oc||tr.dataset.changed==='1';var s=okQ&&okC;tr.style.display=s?'':'none';if(s)v++;});g.style.display=v?'':'none';if(q&&v)g.open=true;});}
+JS = """function filterRows(){var q=document.getElementById('q').value.trim().toLowerCase();var oc=document.getElementById('onlyChanged').checked;document.querySelectorAll('.group').forEach(function(g){var vis=[];g.querySelectorAll('tbody tr').forEach(function(tr){var okQ=!q||tr.dataset.name.toLowerCase().includes(q);var okC=!oc||tr.dataset.changed==='1';var s=okQ&&okC;tr.style.display=s?'':'none';if(s)vis.push(tr);});g.style.display=vis.length?'':'none';if(q&&vis.length)g.open=true;var card=document.querySelector('.card[data-chip="'+g.dataset.chip+'"]');if(card){if(!vis.length){card.style.display='none';}else{card.style.display='';var m=vis[0];vis.forEach(function(t){if(+t.dataset.price<+m.dataset.price)m=t;});card.querySelector('.low').textContent='$'+Number(m.dataset.price).toLocaleString('en-US');card.querySelector('.model').textContent=m.dataset.model;}}});}
 function tick(){var d=new Date();function p(n){return n<10?'0'+n:''+n;}var el=document.getElementById('nowtime');if(el){el.textContent=d.getFullYear()+'/'+p(d.getMonth()+1)+'/'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}}
 tick();setInterval(tick,1000);"""
 
@@ -171,7 +171,8 @@ def build_report(cat, items, prev, prev_date, today, now):
         if not g: continue
         g.sort(key=lambda x: x['price'])
         low = g[0]
-        cards.append(f'<div class="card"><div class="chip">{label}</div><div class="low">${low["price"]:,}</div><div class="model">{htmllib.escape(low["name"])}</div></div>')
+        chip_attr = htmllib.escape(label, quote=True)
+        cards.append(f'<div class="card" data-chip="{chip_attr}"><div class="chip">{label}</div><div class="low">${low["price"]:,}</div><div class="model">{htmllib.escape(low["name"])}</div></div>')
         rows = []
         for it in g:
             old = prev.get(norm_name(it['name']))
@@ -183,11 +184,12 @@ def build_report(cat, items, prev, prev_date, today, now):
             else:
                 chg = '<td class="same">—</td>'; changed = 0
             watch = ' class="watch"' if any(k.lower() in it['name'].lower() for k in WATCH_KEYWORDS) else ''
-            rows.append(f'<tr data-name="{htmllib.escape(it["name"], quote=True)}" data-changed="{changed}"{watch}>'
+            rows.append(f'<tr data-name="{htmllib.escape(it["name"], quote=True)}" data-changed="{changed}" '
+                        f'data-price="{it["price"]}" data-model="{htmllib.escape(it["name"], quote=True)}"{watch}>'
                         f'<td>{get_brand(it["name"])}</td><td>{htmllib.escape(it["name"])}</td>'
                         f'<td class="price">${it["price"]:,}</td>{chg}</tr>')
         groups_html.append(
-            f'<details class="group" {"open" if gi < 2 else ""}><summary>{label}（{len(g)} 款）'
+            f'<details class="group" data-chip="{chip_attr}" {"open" if gi < 2 else ""}><summary>{label}（{len(g)} 款）'
             f'<span class="min">最低 ${low["price"]:,}</span></summary>'
             f'<table><thead><tr><th>品牌</th><th>型號</th><th>價格</th><th>較{prev_date or "上次"}</th></tr></thead>'
             f'<tbody>{"".join(rows)}</tbody></table></details>')
@@ -206,7 +208,7 @@ def build_report(cat, items, prev, prev_date, today, now):
             f'<h1>{cat["title"]}</h1>' + nav +
             f'<div class="meta">資料更新：<b>{today} {now.strftime("%H:%M")}</b>｜現在時間：<b id="nowtime">--</b>｜共 {len(items)} 項｜'
             f'降價 {down} 項 ／ 漲價 {up} 項｜比較基準：{prev_date or "無(首日)"}</div>'
-            f'<div class="toolbar"><input id="q" placeholder="🔍 搜尋品牌/型號..." oninput="filterRows()">'
+            f'<div class="toolbar"><input id="q" placeholder="🔍 搜尋品牌/型號，上方最低價會一起篩選..." oninput="filterRows()">'
             '<label><input type="checkbox" id="onlyChanged" onchange="filterRows()"> 只看價格異動</label></div>'
             '<h2>💡 各分組最低價</h2><div class="cards">' + cards_html + '</div>'
             '<h2>📋 分組明細（點標題展開）</h2>' + body_html + f'<script>{JS}</script></body></html>')
