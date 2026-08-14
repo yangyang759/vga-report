@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# CoolPC 每日價格追蹤器 v11
-# v11: CPU/主機板只追蹤工作站平台(Threadripper/Xeon、TRX50/WRX90/W790...)，電源只追蹤 2000W+
+# CoolPC 每日價格追蹤器 v11.1
+# v11.1: 工作站CPU關鍵字支援 TR 簡稱(TR 7980X / TR PRO 7995WX)，include 改正規式比對
 import urllib.request, urllib.error, re, os, sys, csv, json, time
 import html as htmllib
 from datetime import datetime, timezone, timedelta
@@ -10,9 +10,9 @@ TWT = timezone(timedelta(hours=8))   # 台灣時間
 # ========== 可自行修改 ==========
 WATCH_KEYWORDS = []   # 想特別標記的型號,例如 ['RTX 5070', 'GB10']
 AUTO_OPEN_REPORT = True
-# 工作站關鍵字（想增減直接改這裡）
-WS_CPU = ['Threadripper', 'Xeon', 'EPYC']
-WS_MB = ['TRX50', 'WRX90', 'WRX80', 'TRX40', 'W790', 'W680', 'W580', 'W480']
+# 工作站關鍵字（正規式；想增減直接改這裡）
+WS_CPU = [r'Threadripper', r'\bTR[\s-]?(?:PRO|\d)', r'Xeon', r'EPYC']
+WS_MB = [r'TRX50', r'WRX90', r'WRX80', r'TRX40', r'W790', r'W680', r'W580', r'W480']
 PSU_MIN_WATTS = 2000
 # ================================
 
@@ -61,8 +61,8 @@ SSD_GROUPS = [
     ('2.5吋 SATA', r'2\.5|SATA'),
 ]
 CPU_GROUPS = [
-    ('AMD Threadripper PRO', r'Threadripper\s?PRO'),
-    ('AMD Threadripper', r'Threadripper'),
+    ('AMD Threadripper PRO', r'Threadripper\s?PRO|\bTR[\s-]?PRO'),
+    ('AMD Threadripper', r'Threadripper|\bTR[\s-]?\d'),
     ('Intel Xeon', r'Xeon'),
     ('AMD EPYC', r'EPYC'),
 ]
@@ -175,7 +175,7 @@ def parse_options(body, cat):
         low = name.lower()
         if any(k.lower() in low for k in cat['exclude']): continue
         if cat.get('only') and not only_hit(cat, low): continue
-        if cat.get('include') and not any(k.lower() in low for k in cat['include']): continue
+        if cat.get('include') and not any(re.search(k, name, re.I) for k in cat['include']): continue
         if cat.get('min_watts'):
             ws = [int(x) for x in re.findall(r'(\d{3,5})\s?W(?![a-zA-Z])', text)]
             if not ws or max(ws) < cat['min_watts']: continue
