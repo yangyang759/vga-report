@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# CoolPC 每日價格追蹤器 v9.2
-# v9.2: 關鍵字鎖定分類(如 DGX Spark)改為整頁掃描，網站有列就一定抓得到
+# CoolPC 每日價格追蹤器 v9.4
+# v9.4: DGX 群組改用 GB10/DGX Spark 雙關鍵字 + 原始碼診斷日誌
 import urllib.request, urllib.error, re, os, sys, csv
 import html as htmllib
 from datetime import datetime, timezone, timedelta
@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 TWT = timezone(timedelta(hours=8))   # 台灣時間
 
 # ========== 可自行修改 ==========
-WATCH_KEYWORDS = []   # 想特別標記的型號,例如 ['RTX 5070', 'DDR5-6000']
+WATCH_KEYWORDS = []   # 想特別標記的型號,例如 ['RTX 5070', 'GB10']
 AUTO_OPEN_REPORT = True
 # ================================
 
@@ -19,7 +19,8 @@ BASE_DIR = os.getcwd()
 DATA_DIR = os.path.join(BASE_DIR, 'coolpc_vga_data')
 
 BRANDS = ['華碩', '技嘉', '微星', 'ZOTAC', 'INNO3D', '藍寶石', '撼訊', '華擎', 'ACER', '麗臺',
-          '金士頓', '美光', '芝奇', '海盜船', 'KLEVV', '十銓', 'UMAX', '威剛', 'NVIDIA', 'ALTOS']
+          '金士頓', '美光', '芝奇', '海盜船', 'KLEVV', '十銓', 'UMAX', '威剛', 'NVIDIA', 'ALTOS',
+          'GIGABYTE', 'MSI', 'ASUS']
 
 VGA_GROUPS = [
     ('RTX 5090', r'RTX\s?5090'), ('RTX 5080', r'RTX\s?5080'),
@@ -46,7 +47,7 @@ RAM_GROUPS = [
     ('DDR3', r'DDR3'),
 ]
 
-DGX_GROUPS = [('NVIDIA DGX Spark', r'DGX')]
+DGX_GROUPS = [('GB10 / DGX Spark', r'GB10|DGX')]
 
 CATEGORIES = [
     {'key': 'vga', 'title': '顯示卡每日報價',
@@ -61,12 +62,12 @@ CATEGORIES = [
      'fallback_id': '6',
      'exclude': [],
      'groups': RAM_GROUPS, 'report': 'ram_report.html'},
-    {'key': 'dgx', 'title': 'DGX Spark 每日報價',
+    {'key': 'dgx', 'title': 'DGX Spark / GB10 每日報價',
      'header_words': ('品牌小主機',), 'match_any': True,
      'not_words': (),
      'fallback_id': '1',
      'exclude': ['連接線', 'Cable'],
-     'only': ['DGX Spark'],
+     'only': ['GB10', 'DGX Spark'], 'only_any': True,
      'groups': DGX_GROUPS, 'report': 'dgx_report.html'},
 ]
 
@@ -98,6 +99,11 @@ def find_section(page, cat):
         if cid == cat['fallback_id']: fallback = body
     return fallback
 
+def only_hit(cat, low):
+    kws = [k.lower() for k in cat.get('only', [])]
+    if not kws: return True
+    return any(k in low for k in kws) if cat.get('only_any') else all(k in low for k in kws)
+
 def parse_options(body, cat):
     items = []
     for m in re.finditer(r'<option\b([^>]*)>(.*?)</option>', body, re.I | re.S):
@@ -113,9 +119,29 @@ def parse_options(body, cat):
         if cat['key'] == 'vga' and ('吋' in name or '筆電' in name): continue
         low = name.lower()
         if any(k.lower() in low for k in cat['exclude']): continue
-        if cat.get('only') and not all(k.lower() in low for k in cat['only']): continue
+        if cat.get('only') and not only_hit(cat, low): continue
         items.append({'id': val.group(1) if val else '', 'name': name, 'price': prices[-1],
                       'raw': text, 'hot': '熱賣' in text})
+    return items
+
+def parse_keyword_items(page, cat):
+    """直接掃原始 HTML 文字：抓「…關鍵字…, $價格」，不依賴 option 標籤結構"""
+    items, seen = [], set()
+    for kw in cat.get('only', []):
+        pat = re.compile(r'([^<>\n]{0,80}' + re.escape(kw) + r'[^<>\n]{0,160}?),?\s*\$([0-9][0-9,]*)', re.I)
+        for m in pat.finditer(page):
+            name = re.sub(r'\s+', ' ', htmllib.unescape(m.group(1))).strip()
+            name = name.strip('❤◆★↪ ,，"\'')
+            if not name: continue
+            low = name.lower()
+            if any(k.lower() in low for k in cat['exclude']): continue
+            if not only_hit(cat, low): continue
+            key = norm_name(name)
+            if key in seen: continue
+            seen.add(key)
+            price = int(m.group(2).replace(',', ''))
+            items.append({'id': '', 'name': name, 'price': price,
+                          'raw': f'{name}, ${price}', 'hot': '熱賣' in name})
     return items
 
 def detect_group(name, groups):
@@ -170,7 +196,7 @@ def build_report(cat, items, prev, prev_date, today, now):
     up = sum(1 for it in items if norm_name(it['name']) in prev and prev[norm_name(it['name'])] < it['price'])
     nav = '<div class="nav">' + ''.join(
         f'<a href="{h}" class="{"active" if k == cat["key"] else ""}">{t}</a>'
-        for h, t, k in [('index.html', '🎮 顯示卡', 'vga'), ('ram.html', '🧮 記憶體', 'ram'), ('dgx.html', '🤖 DGX Spark', 'dgx')]
+        for h, t, k in [('index.html', '🎮 顯示卡', 'vga'), ('ram.html', '🧮 記憶體', 'ram'), ('dgx.html', '🤖 DGX/GB10', 'dgx')]
     ) + '</div>'
     body_html = ''.join(groups_html) if items else '<div class="empty">今日暫無資料（可能缺貨或網站異動），明天再來看看！</div>'
     cards_html = ''.join(cards) if items else ''
@@ -188,13 +214,26 @@ def build_report(cat, items, prev, prev_date, today, now):
 def process_category(cat, page, today, now):
     log(f'--- 處理 {cat["title"]} ---')
     if cat.get('only'):
-        body = page   # 關鍵字鎖定型：直接掃整頁所有商品，不受分類位置影響
+        body = page
         log('整頁掃描模式（關鍵字鎖定）')
+        for k in cat['only']:
+            log(f'原始碼中 "{k}" 出現次數: {len(re.findall(re.escape(k), page, re.I))}')
     else:
         body = find_section(page, cat)
         if not body: log('找不到分類，將產生空報表')
     items = parse_options(body, cat) if body else []
+    if cat.get('only'):
+        have = {norm_name(i['name']) for i in items}
+        extra = [e for e in parse_keyword_items(page, cat) if norm_name(e['name']) not in have]
+        items.extend(extra)
+        log(f'原始碼關鍵字掃描補上 {len(extra)} 項')
     log(f'共解析到 {len(items)} 項')
+    if cat.get('only') and not items:
+        m2 = re.search(re.escape(cat['only'][0]), page, re.I)
+        if m2:
+            log('診斷-關鍵字上下文:', repr(page[max(0, m2.start()-80):m2.start()+120]))
+        else:
+            log('診斷-關鍵字完全不在原始碼中 → 資料為瀏覽器端動態載入，需改抓資料介面')
 
     prev, prev_date = {}, None
     cand = sorted((f, m.group(1)) for f in os.listdir(DATA_DIR)
