@@ -7,7 +7,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: write   # 讓價格歷史存回倉庫，漲跌與走勢圖才有資料
+  contents: write
 
 jobs:
   deploy:
@@ -19,15 +19,6 @@ jobs:
           python-version: "3.12"
       - name: 抓原價屋價格產生報表
         run: python coolpc_vga_tracker.py --quiet
-      - name: 價格歷史存回倉庫
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add coolpc_vga_data
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: 價格資料 $(date -u +%Y-%m-%d %H:%M)"
-            git push
-          fi
       - name: 準備部署目錄
         run: |
           mkdir -p docs
@@ -42,3 +33,13 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy docs --project-name=vga-report
+      - name: 價格歷史存回倉庫（失敗不影響網站）
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add coolpc_vga_data
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: 價格資料 $(date -u +%Y-%m-%d %H:%M)" || true
+            git pull --rebase || true
+            git push || true
+          fi
