@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# CoolPC 每日價格追蹤器 v11.1
-# v11.1: 工作站CPU關鍵字支援 TR 簡稱(TR 7980X / TR PRO 7995WX)，include 改正規式比對
+# CoolPC 每日價格追蹤器 v12
+# v12: 剥離括號前綴作為比對鍵(加框框不算新品) + 已下架清單 + 歷史讀取同步標準化
 import urllib.request, urllib.error, re, os, sys, csv, json, time
 import html as htmllib
 from datetime import datetime, timezone, timedelta
@@ -8,9 +8,8 @@ from datetime import datetime, timezone, timedelta
 TWT = timezone(timedelta(hours=8))   # 台灣時間
 
 # ========== 可自行修改 ==========
-WATCH_KEYWORDS = []   # 想特別標記的型號,例如 ['RTX 5070', 'GB10']
+WATCH_KEYWORDS = []
 AUTO_OPEN_REPORT = True
-# 工作站關鍵字（正規式；想增減直接改這裡）
 WS_CPU = [r'Threadripper', r'\bTR[\s-]?(?:PRO|\d)', r'Xeon', r'EPYC']
 WS_MB = [r'TRX50', r'WRX90', r'WRX80', r'TRX40', r'W790', r'W680', r'W580', r'W480']
 PSU_MIN_WATTS = 2000
@@ -126,9 +125,18 @@ def norm_name(n):
     n = re.sub(r'▼.*$', '', n or '')
     return n.replace(' ', '').replace('\u3000', '').strip()
 
+def key_name(n):
+    """比對用標準鍵：剥離開頭括號前綴（【…】/…/{…}/(…)/〈…〉，可多層）"""
+    n = norm_name(n)
+    for _ in range(3):
+        m = re.match(r'^[\[【{（(〈《<][^\]】}）)〉》>]*[\]】}）)〉》>]\s*', n)
+        if not m: break
+        n = n[m.end():]
+    return n.strip()
+
 def fetch_html():
     last = None
-    for i in range(3):   # 失敗重試 3 次
+    for i in range(3):
         try:
             log(f'下載原價屋估價頁（第 {i+1}/3 次）...')
             req = urllib.request.Request(URL, headers={'User-Agent': UA})
@@ -194,7 +202,7 @@ def parse_keyword_items(page, cat):
             low = name.lower()
             if any(k.lower() in low for k in cat['exclude']): continue
             if not only_hit(cat, low): continue
-            key = norm_name(name)
+            key = key_name(name)
             if key in seen: continue
             seen.add(key)
             price = int(m.group(2).replace(',', ''))
@@ -218,7 +226,7 @@ def load_trends(hist_path, groups):
         with open(hist_path, newline='', encoding='utf-8-sig') as f:
             for row in csv.DictReader(f):
                 d, p = row['日期'], int(row['目前價格'])
-                g = detect_group(row['產品名稱'], groups)
+                g = detect_group(key_name(row['產品名稱']), groups)
                 cur = daily.setdefault(d, {}).get(g)
                 if cur is None or p < cur: daily[d][g] = p
     except (FileNotFoundError, ValueError, KeyError):
@@ -260,6 +268,7 @@ def build_report(cat, items, prev, prev_date, today, now, trends):
     groups = {}
     for it in items: groups.setdefault(detect_group(it['name'], cat['groups']), []).append(it)
     order = [g[0] for g in cat['groups']] + ['其他']
+    today_keys = {key_name(it['name']) for it in items}
     cards, groups_html = [], []
     gi = 0
     for label in order:
@@ -271,7 +280,8 @@ def build_report(cat, items, prev, prev_date, today, now, trends):
         cards.append(f'<div class="card" data-chip="{chip_attr}"><div class="chip">{label}</div><div class="low">${low["price"]:,}</div><div class="model">{htmllib.escape(low["name"])}</div><div class="spark"></div></div>')
         rows = []
         for it in g:
-            old = prev.get(norm_name(it['name']))
+            pv = prev.get(key_name(it['name']))
+            old = pv[0] if pv else None
             if old is None:
                 chg = '<td class="new">新上架</td>' if prev else '<td class="same">—</td>'; changed = 0
             elif old != it['price']:
@@ -290,11 +300,19 @@ def build_report(cat, items, prev, prev_date, today, now, trends):
             f'<table><thead><tr><th>品牌</th><th>型號</th><th>價格</th><th>較{prev_date or "上次"}</th></tr></thead>'
             f'<tbody>{"".join(rows)}</tbody></table></details>')
         gi += 1
-    down = sum(1 for it in items if norm_name(it['name']) in prev and prev[norm_name(it['name'])] > it['price'])
-    up = sum(1 for it in items if norm_name(it['name']) in prev and prev[norm_name(it['name'])] < it['price'])
+    gone = [(v[1], v[0]) for k, v in prev.items() if k not in today_keys]
+    gone_html = ''
+    if gone:
+        grows = ''.join(f'<tr><td>{htmllib.escape(n)}</td><td class="price">${p:,}</td></tr>'
+                        for n, p in sorted(gone, key=lambda x: x[0]))
+        gone_html = (f'<details class="group"><summary>⚠️ 已下架／今日無貨（{len(gone)} 項）</summary>'
+                     f'<table><thead><tr><th>型號（上次名稱）</th><th>上次價格</th></tr></thead>'
+                     f'<tbody>{grows}</tbody></table></details>')
+    down = sum(1 for it in items if (pv := prev.get(key_name(it['name']))) and pv[0] > it['price'])
+    up = sum(1 for it in items if (pv := prev.get(key_name(it['name']))) and pv[0] < it['price'])
     nav = '<div class="nav">' + ''.join(
         f'<a href="{h}" class="{"active" if k == cat["key"] else ""}">{t}</a>' for h, t, k in NAV) + '</div>'
-    body_html = ''.join(groups_html) if items else '<div class="empty">今日暫無資料（可能缺貨或網站異動），明天再來看看！</div>'
+    body_html = (''.join(groups_html) + gone_html) if (items or gone) else '<div class="empty">今日暫無資料（可能缺貨或網站異動），明天再來看看！</div>'
     cards_html = ''.join(cards) if items else ''
     trends_json = json.dumps(trends, ensure_ascii=False)
     return ('<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8">'
@@ -302,7 +320,7 @@ def build_report(cat, items, prev, prev_date, today, now, trends):
             f'<title>{cat["title"]} {today}</title><style>{CSS}</style></head><body>'
             f'<h1>{cat["title"]}</h1>' + nav +
             f'<div class="meta">資料更新：<b>{today} {now.strftime("%H:%M")}</b>｜現在時間：<b id="nowtime">--</b>｜共 {len(items)} 項｜'
-            f'降價 {down} 項 ／ 漲價 {up} 項｜比較基準：{prev_date or "無(首日)"}</div>'
+            f'降價 {down} 項 ／ 漲價 {up} 項 ／ 下架 {len(gone)} 項｜比較基準：{prev_date or "無(首日)"}</div>'
             f'<div class="toolbar"><input id="q" placeholder="🔍 搜尋品牌/型號，上方最低價會一起篩選..." oninput="filterRows()">'
             '<label><input type="checkbox" id="onlyChanged" onchange="filterRows()"> 只看價格異動</label></div>'
             '<h2>💡 各分組最低價（含 30 天走勢）</h2><div class="cards">' + cards_html + '</div>'
@@ -321,8 +339,8 @@ def process_category(cat, page, today, now):
         if not body: log('找不到分類，將產生空報表')
     items = parse_options(body, cat) if body else []
     if cat.get('only'):
-        have = {norm_name(i['name']) for i in items}
-        extra = [e for e in parse_keyword_items(page, cat) if norm_name(e['name']) not in have]
+        have = {key_name(i['name']) for i in items}
+        extra = [e for e in parse_keyword_items(page, cat) if key_name(e['name']) not in have]
         items.extend(extra)
         log(f'原始碼關鍵字掃描補上 {len(extra)} 項')
     log(f'共解析到 {len(items)} 項')
@@ -334,7 +352,7 @@ def process_category(cat, page, today, now):
         prev_date = cand[-1][1]
         with open(os.path.join(DATA_DIR, cand[-1][0]), newline='', encoding='utf-8-sig') as f:
             for row in csv.DictReader(f):
-                try: prev[norm_name(row['產品名稱'])] = int(row['目前價格'])
+                try: prev[key_name(row['產品名稱'])] = [int(row['目前價格']), row['產品名稱']]
                 except Exception: pass
 
     if items:
@@ -356,7 +374,7 @@ def process_category(cat, page, today, now):
     log(f'報表已產生: {report_path}')
 
     if prev and items:
-        ch = [it for it in items if norm_name(it['name']) in prev and prev[norm_name(it['name'])] != it['price']]
+        ch = [it for it in items if (pv := prev.get(key_name(it['name']))) and pv[0] != it['price']]
         log(f'與 {prev_date} 相比: 異動 {len(ch)} 項')
 
 def main():
