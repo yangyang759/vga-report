@@ -27,12 +27,11 @@ jobs:
             [ -f ${f}_report.html ] && cp -f ${f}_report.html docs/${f}.html
           done
           true
-      - name: 部署到 Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy docs --project-name=vga-report
+      - name: 部署到 Cloudflare Pages（直接用最新版 wrangler）
+        run: npx --yes wrangler@latest pages deploy docs --project-name=vga-report
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - name: 價格歷史存回倉庫（失敗不影響網站）
         run: |
           git config user.name "github-actions[bot]"
